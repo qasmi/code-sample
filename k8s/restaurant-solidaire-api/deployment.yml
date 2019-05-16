@@ -1,0 +1,89 @@
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    system: ${SYSTEM_NAME}
+    component: ${COMPONENT_NAME}
+    identifier: ${COMPONENT_NAME}-${SYSTEM_VERSION}
+  name: ${COMPONENT_NAME}
+  namespace: ${K8S_NAMESPACE}
+spec:
+  strategy:
+    type: RollingUpdate
+  replicas: ${REPLICA_NB}
+  selector:
+    matchLabels:
+      system: ${SYSTEM_NAME}
+      component: ${COMPONENT_NAME}
+  template:
+    metadata:
+      labels:
+        system: ${SYSTEM_NAME}
+        component: ${COMPONENT_NAME}
+        identifier: ${COMPONENT_NAME}-${SYSTEM_VERSION}
+    spec:
+      containers:
+      # [START proxy_container]
+      - name: cloudsql-proxy
+        image: gcr.io/cloudsql-docker/gce-proxy:1.11
+        command: ["/cloud_sql_proxy",
+                  "-instances=$INSTANCE_CONNECTION_NAME=tcp:5432",
+                  "-credential_file=/secrets/cloudsql/credentials.json"]
+        securityContext:
+          runAsUser: 2  # non-root user
+          allowPrivilegeEscalation: false
+        volumeMounts:
+        - name: cloudsql-instance-credentials
+          mountPath: /secrets/cloudsql
+          readOnly: true
+      # [END proxy_container]
+      - name: ${COMPONENT_NAME}
+        image: ${RESTAURANT_SOLIDAIRE_REGISTRY}/${COMPONENT_NAME}:${SYSTEM_VERSION}
+        imagePullPolicy: Always
+        env:
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: cloudsql-db-credentials
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cloudsql-db-credentials
+              key: password
+        - name: JAVA_APPLICATION_DIRECTORY
+          value: /etc/code-solidaire
+        - name: JAVA_OPTS
+          value: -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap -Xms256m -Xmx256m -XX:MaxMetaspaceSize=150m
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /actuator/health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 90
+          periodSeconds: 10
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /actuator/health
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 120
+          periodSeconds: 10
+        volumeMounts:
+        - name: application-config
+          mountPath: "/etc/code-solidaire/config"
+          readOnly: true
+      volumes:
+      - name: application-config
+        configMap:
+          name: ${COMPONENT_NAME}-configmap
+          items:
+          - key: application.yaml
+            path: application.yaml
+      - name: cloudsql-instance-credentials
+        secret:
+          secretName: cloudsql-instance-credentials

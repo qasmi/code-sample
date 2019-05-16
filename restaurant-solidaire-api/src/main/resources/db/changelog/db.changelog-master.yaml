@@ -1,0 +1,4 @@
+databaseChangeLog:
+  - include:
+      file: restaurant-solidaire/db-changelog-1.yaml
+      relativeToChangelogFile: "false"

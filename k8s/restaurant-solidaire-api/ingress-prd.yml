@@ -1,0 +1,34 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  labels:
+    system: ${SYSTEM_NAME}
+    component: ${COMPONENT_NAME}
+    identifier: ${COMPONENT_NAME}-${SYSTEM_VERSION}
+  name: ${COMPONENT_NAME}
+  namespace: ${K8S_NAMESPACE}
+  annotations:
+# default ingress
+#    kubernetes.io/ingress.allow-http: "false" # TODO redirect http to https
+#    kubernetes.io/force-ssl-redirect: "true" # todo fix redirect http to https
+    kubernetes.io/ingress.global-static-ip-name: ${COMPONENT_NAME}-ip-address
+    certmanager.k8s.io/cluster-issuer: ${CERTIFICATE_ISSUER}
+    certmanager.k8s.io/acme-http01-edit-in-place: "true"
+
+# nginx ingress
+#    kubernetes.io/ingress.class: nginx
+#    certmanager.k8s.io/cluster-issuer: letsencrypt-staging
+#    kubernetes.io/tls-acme: "true"
+spec:
+  tls:
+  - secretName: otchi-org-tls
+    hosts:
+    - ${DOMAINE_NAME}
+  rules:
+  - host: ${DOMAINE_NAME}
+    http:
+      paths:
+      - path: /*
+        backend:
+          serviceName: ${COMPONENT_NAME}
+          servicePort: 8080

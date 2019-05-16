@@ -1,0 +1,150 @@
+version: 2.1
+jobs:
+  build:
+    docker:
+    - image: circleci/openjdk:8-jdk
+    working_directory: ~/circleci-code-solidaire
+    steps:
+      - checkout
+      - restore_cache:
+          key: maven-
+      - run:
+          name: Download maven dependencies
+          working_directory: .
+          command: mvn dependency:go-offline
+      - run:
+          name: Build application
+          working_directory: .
+          command: mvn package --quiet
+      - save_cache:
+          key: maven-{{checksum "pom.xml"}}
+          paths:
+          - ~/.m2
+      - persist_to_workspace:
+          root: .
+          paths:
+          - .
+  dockerize:
+    executor: docker-gke
+    steps:
+      - attach_workspace:
+          at: .
+      - setup_google_cloud
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - docker_tag_and_push:
+          component: restaurant-solidaire-api
+
+  deploy:
+    executor: docker-gke
+    parameters:
+      k8s-environment:
+        type: string
+        default: default
+    steps:
+      - checkout
+      - setup_google_cloud
+      - deploy_gke:
+          component: restaurant-solidaire-api
+          k8s-environment: << parameters.k8s-environment >>
+workflows:
+  build_and_deploy:
+    jobs:
+    - build:
+        filters:
+          tags:
+            only: /.*/
+    - dockerize:
+        filters:
+          tags:
+            only: /.*/
+        requires:
+        - build
+    - deploy:
+        k8s-environment: qa
+        requires:
+          - build
+          - dockerize
+        filters:
+          tags:
+            only: /.*/
+    - deploy:
+        k8s-environment: prd
+        requires:
+        - build
+        - dockerize
+        filters:
+          tags:
+            only: /^\d+\.\d+\.\d+$/
+          branches:
+            ignore: /.*/
+
+executors:
+  docker-gke:
+    working_directory: ~/circleci-code-solidaire
+    docker:
+    - image: google/cloud-sdk
+
+commands:
+  setup_google_cloud:
+    steps:
+    - run:
+        name: Setup Google Cloud SDK
+        command: |
+          apt-get install -qq -y gettext
+          echo $GCLOUD_SERVICE_KEY > ${HOME}/gcloud-service-key.json
+          gcloud auth activate-service-account --key-file=${HOME}/gcloud-service-key.json
+          gcloud --quiet config set project ${GOOGLE_PROJECT_ID}
+          gcloud --quiet config set compute/zone ${GOOGLE_COMPUTE_ZONE}
+          gcloud --quiet container clusters get-credentials ${GOOGLE_CLUSTER_NAME}
+
+  docker_tag_and_push:
+    parameters:
+      component:
+        type: string
+    steps:
+    - run:
+        name: Docker tag and push
+        command: |
+          if [ "${CIRCLE_TAG}" == "" ]; then
+            export TAG=$(echo $CIRCLE_SHA1 | cut -c1-7)
+          else
+            export TAG=$CIRCLE_TAG
+          fi
+          docker build -t ${GOOGLE_REGISTRY_URL}/${GOOGLE_PROJECT_ID}/restaurant-solidaire-api/<< parameters.component >>:${TAG} << parameters.component >>
+          gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://${GOOGLE_REGISTRY_URL}
+          docker push ${GOOGLE_REGISTRY_URL}/${GOOGLE_PROJECT_ID}/restaurant-solidaire-api/<< parameters.component >>:${TAG}
+  deploy_gke:
+    parameters:
+      component:
+        type: string
+      k8s-environment:
+        type: string
+    steps:
+    - run:
+        name: Deploy into Kubernetes cluster
+        command: |
+          if [ "${CIRCLE_TAG}" == "" ]; then
+            export SYSTEM_VERSION=$(echo $CIRCLE_SHA1 | cut -c1-7)
+          else
+            export SYSTEM_VERSION=$CIRCLE_TAG
+          fi
+          source ./k8s/<< parameters.component >>/env/<< parameters.k8s-environment >>/parameters-configmap.env
+          source ./k8s/<< parameters.component >>/env/<< parameters.k8s-environment >>/parameters-deployment.env
+          # deploy configmap
+          envsubst < k8s/<< parameters.component >>/configmap.yml > ${HOME}/patched_configmap.yml
+          kubectl apply -f ${HOME}/patched_configmap.yml
+          # deploy service
+          if [ -f k8s/<< parameters.component >>/service.yml ]; then
+            envsubst < k8s/<< parameters.component >>/service.yml > ${HOME}/patched_service.yml
+            kubectl apply -f ${HOME}/patched_service.yml
+          fi
+          # deploy ingress (add tls)
+          if [ -f k8s/<< parameters.component >>/ingress-<< parameters.k8s-environment >>.yml ];  then
+            envsubst < k8s/<< parameters.component >>/ingress-<< parameters.k8s-environment >>.yml > ${HOME}/patched_ingress.yml
+            kubectl apply -f ${HOME}/patched_ingress.yml
+          fi
+          # deploy api
+          envsubst < k8s/<< parameters.component >>/deployment.yml > ${HOME}/patched_k8s.yml
+          kubectl apply -f ${HOME}/patched_k8s.yml
+          kubectl rollout status deployment/${COMPONENT_NAME} -n ${K8S_NAMESPACE}

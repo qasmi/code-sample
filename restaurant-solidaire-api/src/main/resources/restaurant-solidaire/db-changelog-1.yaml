@@ -1,0 +1,43 @@
+databaseChangeLog:
+  - changeSet:
+      id: restaurant-solidaire-1
+      author: qasmi
+      changes:
+        - createTable:
+            tableName: restaurant
+            columns:
+              - column:
+                  name: id
+                  type: VARCHAR(255)
+                  constraints:
+                    primaryKey: true
+  - changeSet:
+      id: restaurant-solidaire-2
+      author: qasmi
+      changes:
+      - addColumn:
+            columns:
+            - column:
+                  name: name
+                  type: varchar(255)
+            tableName: restaurant
+  - changeSet:
+          id: restaurant-solidaire-3
+          author: qasmi
+          changes:
+          - modifyDataType:
+                  columnName: id
+                  newDataType: BIGINT
+                  tableName: restaurant
+  - changeSet:
+      id: restaurant-solidaire-4
+      author: qasmi
+      changes:
+      - createTable:
+          tableName: client
+          columns:
+          - column:
+              name: id
+              type: VARCHAR(255)
+              constraints:
+                primaryKey: true

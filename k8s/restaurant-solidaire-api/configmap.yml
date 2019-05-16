@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    system: ${SYSTEM_NAME}
+    component: ${COMPONENT_NAME}
+    identifier: ${COMPONENT_NAME}-${SYSTEM_VERSION}
+  name: ${COMPONENT_NAME}-configmap
+  namespace: ${K8S_NAMESPACE}
+data:
+  application.yaml: |
+    spring:
+      datasource:
+        url: ${DATABASE_URL}
+    test: ${TEST}
+    java: 11
